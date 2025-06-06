@@ -20,7 +20,7 @@ from aiogram import Router
 
 load_dotenv()
 API_TOKEN = os.getenv("API_TOKEN")
-DB_FILE = "worklogs.db"
+DB_FILE = "work.db"
 
 logging.basicConfig(level=logging.INFO)
 
@@ -798,6 +798,10 @@ async def report(message: Message):
 
 from io import BytesIO
 from aiogram.types import BufferedInputFile
+
+
+# ---------- EXCEL ----------
+
 
 @router.message(Command("export_excel"))
 async def export_excel(message: Message):
