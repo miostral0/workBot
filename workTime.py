@@ -1083,12 +1083,15 @@ async def get_sticker_id(message: Message):
     await message.answer(f"🆔 Sticker file ID:\n`{message.sticker.file_id}`", parse_mode="Markdown")
 
 # ---------- MAIN ----------
+# ---------- MAIN ----------
 async def main():
     await init_db()
     await set_bot_commands()
+    await bot.delete_webhook(drop_pending_updates=True)
     scheduler.start()
     dp.include_router(router)
     await dp.start_polling(bot)
+
 
 
 if __name__ == "__main__":
