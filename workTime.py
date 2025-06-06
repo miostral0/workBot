@@ -20,7 +20,10 @@ from aiogram import Router
 
 load_dotenv()
 API_TOKEN = os.getenv("API_TOKEN")
-DB_FILE = "work.db"
+DB_DIR = "data"
+os.makedirs(DB_DIR, exist_ok=True)
+DB_FILE = os.path.join(DB_DIR, "work.db")
+
 
 logging.basicConfig(level=logging.INFO)
 
@@ -165,7 +168,7 @@ async def send_low_stock_reminder():
 
 
 # ---------- DB SETUP ----------
-DB_FILE = 'work.db'
+
 
 
 async def init_db():
