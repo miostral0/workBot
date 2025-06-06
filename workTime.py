@@ -796,24 +796,21 @@ async def report(message: Message):
     except Exception as e:
         print(f"Failed to send sticker: {e}")
 
+from io import BytesIO
+
 
 @router.message(Command("export_excel"))
-async def export_excel_handler(message: Message):
+async def export_excel(message: Message):
     user_id = str(message.from_user.id)
 
     try:
         async with aiosqlite.connect(DB_FILE) as db:
-            async with db.execute("""
-                SELECT date, start_time, end_time, hours 
-                FROM work_logs 
-                WHERE user_id = ? 
-                ORDER BY date
-            """, (user_id,)) as cursor:
+            async with db.execute("SELECT date, start_time, end_time, hours FROM work_logs WHERE user_id = ? ORDER BY date", (user_id,)) as cursor:
                 logs = await cursor.fetchall()
 
-        if not logs:
-            await message.answer("❌ No work log data found.")
-            return
+            if not logs:
+                await message.answer("❌ No work log data found.")
+                return
 
         wb = Workbook()
         ws = wb.active
@@ -821,17 +818,14 @@ async def export_excel_handler(message: Message):
 
         headers = ["Date", "Start", "End", "Hours"]
         ws.append(headers)
-
-        header_style = Font(bold=True)
-        border_style = Border(
-            left=Side(style='thin'),
-            right=Side(style='thin'),
-            top=Side(style='thin'),
-            bottom=Side(style='thin')
-        )
         for cell in ws[1]:
-            cell.font = header_style
-            cell.border = border_style
+            cell.font = Font(bold=True)
+            cell.border = Border(
+                left=Side(style='thin'),
+                right=Side(style='thin'),
+                top=Side(style='thin'),
+                bottom=Side(style='thin')
+            )
 
         for row in logs:
             ws.append(row)
@@ -840,8 +834,8 @@ async def export_excel_handler(message: Message):
         wb.save(output)
         output.seek(0)
 
-        file = InputFile(output, filename=f"work_log_{user_id}.xlsx")
-        await message.answer_document(file, caption="📊 Your work log report is ready!")
+        file = InputFile(path_or_bytesio=output, filename=f"report_{user_id}.xlsx")
+        await message.answer_document(file, caption="📊 Your work log report.")
 
     except Exception as e:
         await message.answer("❌ Failed to export your work log.")
