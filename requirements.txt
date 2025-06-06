@@ -4,3 +4,4 @@ aiosqlite
 openpyxl
 apscheduler
 pytz
+databases[postgresql]
