@@ -1,0 +1,6 @@
+aiogram
+python-dotenv
+aiosqlite
+openpyxl
+apscheduler
+pytz
