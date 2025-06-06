@@ -16,13 +16,17 @@ from openpyxl.styles import Font, Border, Side
 from io import BytesIO 
 from aiogram import Router
 from databases import Database
+from openpyxl import Workbook
+from openpyxl.styles import Font, Border, Side
+from io import BytesIO
+from aiogram.types import BufferedInputFile
 
 
 
 load_dotenv()
 API_TOKEN = os.getenv("API_TOKEN")
 DATABASE_URL = os.getenv("DATABASE_URL")
-DB_FILE = Database(DATABASE_URL)
+database = Database(DATABASE_URL)
 
 logging.basicConfig(level=logging.INFO)
 
@@ -43,77 +47,112 @@ async def cmd_start(message: Message):
 
 
 # ---------- SEND DAILY REMINDERS ----------
+
 async def send_start_work_reminders():
     today = datetime.now().strftime("%d/%m/%Y")
-    async with aiosqlite.connect(DB_FILE) as db:
-        async with db.execute("SELECT user_id FROM users") as cursor:
-            users = await cursor.fetchall()
 
-        for (user_id,) in users:
-            async with db.execute("SELECT start_time, shift FROM work_logs WHERE user_id = ? AND date = ?", (user_id, today)) as cur:
-                row = await cur.fetchone()
-                start_time, shift = (row or (None, None))
-                if (not start_time or start_time in ("", "OFF")) and shift in ("first", "middle", "second", "full"):
-                    try:
-                        await bot.send_message(user_id, "⏰ Reminder: Please start your work using /start_work.")
-                        await bot.send_sticker(user_id, "CAACAgIAAxkBAAIKMWgw-5DZku7F6DDz7kmLClAdtmgvAALEAQACGBV4Ay23D3KHIlnkNgQ")
-                    except Exception as e:
-                        print(f"Start reminder failed for {user_id}: {e}")
+    try:
+        await database.connect()
+        
+        users = await database.fetch_all("SELECT user_id FROM users")
+        
+        for user in users:
+            user_id = user["user_id"]
+            row = await database.fetch_one(
+                "SELECT start_time, shift FROM work_logs WHERE user_id = :user_id AND date = :date",
+                values={"user_id": user_id, "date": today}
+            )
+
+            start_time = row["start_time"] if row else None
+            shift = row["shift"] if row else None
+
+            if (not start_time or start_time in ("", "OFF")) and shift in ("first", "middle", "second", "full"):
+                try:
+                    await bot.send_message(user_id, "⏰ Reminder: Please start your work using /start_work.")
+                    await bot.send_sticker(user_id, "CAACAgIAAxkBAAIKMWgw-5DZku7F6DDz7kmLClAdtmgvAALEAQACGBV4Ay23D3KHIlnkNgQ")
+                except Exception as e:
+                    print(f"Start reminder failed for {user_id}: {e}")
+
+        await database.disconnect()
+
+    except Exception as e:
+        print(f"❌ Error in send_start_work_reminders: {e}")
+
+
 
 
 async def send_end_work_reminders():
     today = datetime.now().strftime("%d/%m/%Y")
-    async with aiosqlite.connect(DB_FILE) as db:
-        async with db.execute("SELECT user_id FROM users") as cursor:
-            users = await cursor.fetchall()
+    query_users = "SELECT user_id FROM users"
+    query_work_logs = "SELECT end_time, shift FROM work_logs WHERE user_id = :user_id AND date = :date"
 
-        for (user_id,) in users:
-            async with db.execute("SELECT end_time, shift FROM work_logs WHERE user_id = ? AND date = ?", (user_id, today)) as cur:
-                row = await cur.fetchone()
-                end_time, shift = (row or (None, None))
-                if (not end_time or end_time in ("", "OFF")) and shift in ("first", "middle", "second", "full"):
-                    try:
-                        await bot.send_message(user_id, "⏰ Reminder: Please end your work using /end_work.")
-                        await bot.send_sticker(user_id, "CAACAgIAAxkBAAIG0WgX9dhtJ7JL7_foAxQ3_QT8M4YJAAIDAAMU-sgfeoaGU4zV2H02BA")
-                    except Exception as e:
-                        print(f"End reminder failed for {user_id}: {e}")
+    try:
+        users = await database.fetch_all(query=query_users)
 
+        for user in users:
+            user_id = user["user_id"]
+            row = await database.fetch_one(query=query_work_logs, values={"user_id": user_id, "date": today})
+
+            end_time, shift = (row["end_time"], row["shift"]) if row else (None, None)
+
+            if (not end_time or end_time in ("", "OFF")) and shift in ("first", "middle", "second", "full"):
+                try:
+                    await bot.send_message(user_id, "⏰ Reminder: Please end your work using /end_work.")
+                    await bot.send_sticker(user_id, "CAACAgIAAxkBAAIG0WgX9dhtJ7JL7_foAxQ3_QT8M4YJAAIDAAMU-sgfeoaGU4zV2H02BA")
+                except Exception as e:
+                    print(f"End reminder failed for {user_id}: {e}")
+
+    except Exception as e:
+        print(f"❌ Error in send_end_work_reminders: {e}")
 
 
 async def send_full_shift_luck():
     today = datetime.now().strftime("%d/%m/%Y")
-    async with aiosqlite.connect(DB_FILE) as db:
-        async with db.execute("SELECT user_id FROM users") as cursor:
-            users = await cursor.fetchall()
+    query_users = "SELECT user_id FROM users"
+    query_shift = "SELECT shift FROM work_logs WHERE user_id = :user_id AND date = :date"
 
-        for (user_id,) in users:
-            async with db.execute("SELECT shift FROM work_logs WHERE user_id = ? AND date = ?", (user_id, today)) as cur:
-                row = await cur.fetchone()
-                shift = row[0] if row else None
+    try:
+        users = await database.fetch_all(query=query_users)
 
-                if shift == "full":
-                    try:
-                        await bot.send_message(user_id, "👊 Good luck, bro! 💪🔥 Full shift warrior (08:00–00:00) 💼")
-                        await bot.send_sticker(user_id, "CAACAgIAAxkBAAIKImgw9wABkVyP5aUEqlmZEq1w2dyGiwACBwADFPrIH2NKV7THPXVJNgQ")
-                    except Exception as e:
-                        logging.error(f"Fullshift message failed for {user_id}: {e}")
+        for user in users:
+            user_id = user["user_id"]
+            row = await database.fetch_one(query=query_shift, values={"user_id": user_id, "date": today})
+            shift = row["shift"] if row else None
+
+            if shift == "full":
+                try:
+                    await bot.send_message(user_id, "👊 Good luck, bro! 💪🔥 Full shift warrior (08:00–00:00) 💼")
+                    await bot.send_sticker(user_id, "CAACAgIAAxkBAAIKImgw9wABkVyP5aUEqlmZEq1w2dyGiwACBwADFPrIH2NKV7THPXVJNgQ")
+                except Exception as e:
+                    logging.error(f"Fullshift message failed for {user_id}: {e}")
+
+    except Exception as e:
+        logging.error(f"Error in send_full_shift_luck: {e}")
+
+
 
 async def send_off_shift():
     today = datetime.now().strftime("%d/%m/%Y")
-    async with aiosqlite.connect(DB_FILE) as db:
-        async with db.execute("SELECT user_id FROM users") as cursor:
-            users = await cursor.fetchall()
+    query_users = "SELECT user_id FROM users"
+    query_shift = "SELECT shift FROM work_logs WHERE user_id = :user_id AND date = :date"
 
-        for (user_id,) in users:
-            async with db.execute("SELECT shift FROM work_logs WHERE user_id = ? AND date = ?", (user_id, today)) as cur:
-                row = await cur.fetchone()
-                shift = row[0] if row else None
+    try:
+        users = await database.fetch_all(query=query_users)
 
-                if shift == "off":
-                    try:
-                        await bot.send_sticker(user_id, "CAACAgIAAxkBAAIKM2gw-79m051BaKPnp5ztU3yr6qqwAAIvAQACGBV4A1gAAdjLvMkb4zYE")
-                    except Exception as e:
-                        logging.error(f"Offshift message failed for {user_id}: {e}")
+        for user in users:
+            user_id = user["user_id"]
+            row = await database.fetch_one(query=query_shift, values={"user_id": user_id, "date": today})
+            shift = row["shift"] if row else None
+
+            if shift == "off":
+                try:
+                    await bot.send_sticker(user_id, "CAACAgIAAxkBAAIKM2gw-79m051BaKPnp5ztU3yr6qqwAAIvAQACGBV4A1gAAdjLvMkb4zYE")
+                except Exception as e:
+                    logging.error(f"Offshift message failed for {user_id}: {e}")
+
+    except Exception as e:
+        logging.error(f"Error in send_off_shift: {e}")
+
 
 # ---------- DAILY REMINDER JOBS ----------
 
@@ -136,30 +175,28 @@ scheduler.add_job(send_off_shift, 'cron', hour=15, minute=30)
 
 # ---------- DAILY INVENTORY REMAINDER ----------
 
-async def send_low_stock_reminder():
-    async with aiosqlite.connect(DB_FILE) as db:
-        # Get all products below their defined threshold
-        async with db.execute("""
-            SELECT name, quantity, unit FROM products
-            WHERE quantity <= threshold AND threshold > 0
-        """) as cursor:
-            low_stock_products = await cursor.fetchall()
 
-        # Get all admin user IDs
-        async with db.execute("SELECT admin_user_id FROM admins") as cursor:
-            admins = await cursor.fetchall()
+async def send_low_stock_reminder():
+    # Get all products below their threshold
+    low_stock_products = await database.fetch_all("""
+        SELECT name, quantity, unit FROM products
+        WHERE quantity <= threshold AND threshold > 0
+    """)
+
+    # Get all admin user IDs
+    admins = await database.fetch_all("SELECT admin_user_id FROM admins")
 
     if not low_stock_products or not admins:
         return  # No need to notify
 
-    # Build reminder message
     reminder_msg = "⚠️ *Low Stock Alert:*\nThe following products are running low:\n\n"
-    for name, quantity, unit in low_stock_products:
+    for product in low_stock_products:
+        quantity = product["quantity"]
         quantity_display = int(quantity) if quantity == int(quantity) else quantity
-        reminder_msg += f"• {name}: {quantity_display} {unit}\n"
+        reminder_msg += f"• {product['name']}: {quantity_display} {product['unit']}\n"
 
-    # Send to all admins
-    for (admin_id,) in admins:
+    for admin in admins:
+        admin_id = admin["admin_user_id"]
         await bot.send_message(admin_id, reminder_msg, parse_mode="Markdown")
 
 
@@ -281,24 +318,9 @@ async def init_db():
 
 
 # ---------- REGISTER ----------
-
 class RegistrationStates(StatesGroup):
     waiting_for_name = State()
     waiting_for_station = State()
-
-@dp.message(Command("register"))
-async def start_register(message: types.Message, state: FSMContext):
-    await message.answer("Please provide your name:")
-    await state.set_state(RegistrationStates.waiting_for_name)
-
-@dp.message(StateFilter(RegistrationStates.waiting_for_name))
-async def set_name(message: types.Message, state: FSMContext):
-    user_id = str(message.from_user.id)
-    name = message.text
-
-    await state.update_data(name=name)
-    await message.answer(f"Hello {name}, now please select your station: 'bar', 'tiramisu', 'kitchen', or 'manager'.")
-    await state.set_state(RegistrationStates.waiting_for_station)
 
 @dp.message(StateFilter(RegistrationStates.waiting_for_station))
 async def set_station(message: types.Message, state: FSMContext):
@@ -309,19 +331,30 @@ async def set_station(message: types.Message, state: FSMContext):
         await message.answer("⚠️ Invalid station. Please select one of: 'bar', 'tiramisu', 'kitchen', or 'manager'.")
         return
 
-    async with aiosqlite.connect(DB_FILE) as db:
-        async with db.execute("SELECT hourly_rate FROM stations WHERE name = ?", (station,)) as cursor:
-            row = await cursor.fetchone()
-            hourly_rate = row[0]
+    query_hourly_rate = "SELECT hourly_rate FROM stations WHERE name = :station"
+    row = await database.fetch_one(query=query_hourly_rate, values={"station": station})
+    if not row:
+        await message.answer("⚠️ Station not found. Please try again.")
+        return
+    hourly_rate = row["hourly_rate"]
 
-        data = await state.get_data()
-        name = data["name"]
+    data = await state.get_data()
+    name = data["name"]
 
-        await db.execute("""
-            INSERT OR REPLACE INTO users (user_id, name, station, hourly_rate)
-            VALUES (?, ?, ?, ?)
-        """, (user_id, name, station, hourly_rate))
-        await db.commit()
+    query_insert = """
+        INSERT INTO users (user_id, name, station, hourly_rate)
+        VALUES (:user_id, :name, :station, :hourly_rate)
+        ON CONFLICT (user_id) DO UPDATE SET
+            name = EXCLUDED.name,
+            station = EXCLUDED.station,
+            hourly_rate = EXCLUDED.hourly_rate
+    """
+    await database.execute(query=query_insert, values={
+        "user_id": user_id,
+        "name": name,
+        "station": station,
+        "hourly_rate": hourly_rate
+    })
 
     await message.answer(f"✅ Registered as {name} at {station.capitalize()} station ({hourly_rate} per hour).")
     await state.clear()
@@ -333,21 +366,19 @@ class RegistrationAdmin(StatesGroup):
     waiting_for_admin_code = State() 
 
 
-
 @dp.message(Command("register_admin"))
 async def register_admin(message: types.Message, state: FSMContext):
-
     await message.answer("Please enter your name to register as an admin:")
     await state.set_state(RegistrationAdmin.waiting_for_name)
 
+
 @dp.message(StateFilter(RegistrationAdmin.waiting_for_name))
 async def ask_admin_code(message: types.Message, state: FSMContext):
-
     admin_name = message.text
-
     await state.update_data(admin_name=admin_name)
     await message.answer("🔐 Now, please enter the admin code:")
     await state.set_state(RegistrationAdmin.waiting_for_admin_code)
+
 
 @dp.message(StateFilter(RegistrationAdmin.waiting_for_admin_code))
 async def verify_admin_code(message: types.Message, state: FSMContext):
@@ -356,9 +387,12 @@ async def verify_admin_code(message: types.Message, state: FSMContext):
     admin_name = data.get("admin_name")
 
     if message.text.strip() == "0305":
-        async with aiosqlite.connect(DB_FILE) as db:
-            await db.execute("INSERT OR IGNORE INTO admins (admin_user_id, name) VALUES (?, ?)", (user_id, admin_name))
-            await db.commit()
+        query = """
+        INSERT INTO admins (admin_user_id, name)
+        VALUES (:user_id, :admin_name)
+        ON CONFLICT (admin_user_id) DO NOTHING
+        """
+        await database.execute(query=query, values={"user_id": user_id, "admin_name": admin_name})
 
         await message.answer(f"✅ {admin_name}, you are now registered as an admin.")
     else:
@@ -368,32 +402,49 @@ async def verify_admin_code(message: types.Message, state: FSMContext):
 
 
 
+
 # ---------- CHANGE STATION ----------
 
-@dp.message(Command("change_station"))
-async def change_station(message: Message):
-    user_id = str(message.from_user.id)
-    await message.answer("Please select a new station: 'bar', 'tiramisu', 'kitchen', or 'manager'.")
-    
-    @dp.message_handler(lambda msg: msg.text.lower() in ['bar', 'tiramisu', 'kitchen', 'manager'])
-    async def set_new_station(msg: Message):
-        new_station = msg.text.lower()
-        async with aiosqlite.connect(DB_FILE) as db:
-            async with db.execute("SELECT hourly_rate FROM stations WHERE station_name = ?", (new_station,)) as cursor:
-                row = await cursor.fetchone()
-                hourly_rate = row[0]
-            await db.execute("""
-                UPDATE users SET station = ?, hourly_rate = ? WHERE user_id = ?
-            """, (new_station, hourly_rate, user_id))
-            await db.commit()
-        
-        await msg.answer(f"Your station has been updated to {new_station} with an hourly rate of {hourly_rate}.")
+class ChangeStationStates(StatesGroup):
+    waiting_for_new_station = State()
 
-# --- Check if user is admin helper ---
+@dp.message(Command("change_station"))
+async def change_station_start(message: Message, state: FSMContext):
+    await message.answer("Please select a new station: 'bar', 'tiramisu', 'kitchen', or 'manager'.")
+    await state.set_state(ChangeStationStates.waiting_for_new_station)
+
+@dp.message(StateFilter(ChangeStationStates.waiting_for_new_station))
+async def set_new_station(message: Message, state: FSMContext):
+    new_station = message.text.lower()
+    if new_station not in ['bar', 'tiramisu', 'kitchen', 'manager']:
+        await message.answer("⚠️ Invalid station. Please select one of: 'bar', 'tiramisu', 'kitchen', or 'manager'.")
+        return
+
+    query_rate = "SELECT hourly_rate FROM stations WHERE name = :station"
+    row = await database.fetch_one(query=query_rate, values={"station": new_station})
+
+    if not row:
+        await message.answer("Station not found in database.")
+        await state.clear()
+        return
+
+    hourly_rate = row["hourly_rate"]
+    user_id = str(message.from_user.id)
+
+    query_update = """
+    UPDATE users SET station = :station, hourly_rate = :hourly_rate WHERE user_id = :user_id
+    """
+    await database.execute(query=query_update, values={"station": new_station, "hourly_rate": hourly_rate, "user_id": user_id})
+
+    await message.answer(f"✅ Your station has been updated to {new_station} with an hourly rate of {hourly_rate}.")
+    await state.clear()
+
 async def is_admin(user_id: str) -> bool:
-    async with aiosqlite.connect(DB_FILE) as db:
-        async with db.execute("SELECT 1 FROM admins WHERE admin_user_id = ?", (user_id,)) as cursor:
-            return await cursor.fetchone() is not None
+    query = "SELECT 1 FROM admins WHERE admin_user_id = :user_id"
+    row = await database.fetch_one(query=query, values={"user_id": user_id})
+    return row is not None
+
+
 
 # --- ADD CATEGORY ---
 @dp.message(Command("add_category"))
@@ -409,9 +460,8 @@ async def add_category(message: Message):
         return
     
     category_name = parts[1].strip()
-    async with aiosqlite.connect(DB_FILE) as db:
-        await db.execute("INSERT OR IGNORE INTO categories (name) VALUES (?)", (category_name,))
-        await db.commit()
+    query = "INSERT INTO categories (name) VALUES (:name) ON CONFLICT DO NOTHING"
+    await database.execute(query=query, values={"name": category_name})
 
     await message.answer(f"✅ Category *{category_name}* has been added.", parse_mode="Markdown")
 
@@ -435,22 +485,20 @@ async def add_product(message: Message):
         await message.answer("⚠️ Quantity must be an integer.")
         return
 
-    async with aiosqlite.connect(DB_FILE) as db:
-        # Get or create category
-        cursor = await db.execute("SELECT category_id FROM categories WHERE name = ?", (category_name,))
-        row = await cursor.fetchone()
-        if row:
-            category_id = row[0]
-        else:
-            cursor = await db.execute("INSERT INTO categories (name) VALUES (?)", (category_name,))
-            category_id = cursor.lastrowid
-            await db.commit()
+    # Get or create category_id
+    category_row = await database.fetch_one("SELECT category_id FROM categories WHERE name = :name", {"name": category_name})
+    if category_row:
+        category_id = category_row["category_id"]
+    else:
+        category_id = await database.execute("INSERT INTO categories (name) VALUES (:name) RETURNING category_id", {"name": category_name})
 
-        await db.execute(
-            "INSERT INTO products (name, quantity, unit, category_id) VALUES (?, ?, ?, ?)",
-            (name, quantity, unit, category_id)
-        )
-        await db.commit()
+    await database.execute(
+        """
+        INSERT INTO products (name, quantity, unit, category_id)
+        VALUES (:name, :quantity, :unit, :category_id)
+        """,
+        {"name": name, "quantity": quantity, "unit": unit, "category_id": category_id}
+    )
 
     await message.answer(f"✅ Product *{name}* added under category *{category_name}*.", parse_mode="Markdown")
 
@@ -474,19 +522,23 @@ async def use_product(message: Message):
         await message.answer("⚠️ Invalid product ID or quantity.")
         return
 
-    async with aiosqlite.connect(DB_FILE) as db:
-        async with db.execute("SELECT quantity, unit FROM products WHERE product_id = ?", (product_id,)) as cursor:
-            row = await cursor.fetchone()
-            if not row:
-                await message.answer("❌ Product not found.")
-                return
-            current_quantity, unit = row
-            if quantity_used > current_quantity:
-                await message.answer(f"❌ Insufficient stock. Only {current_quantity} {unit} available.")
-                return
-            new_quantity = current_quantity - quantity_used
-            await db.execute("UPDATE products SET quantity = ? WHERE product_id = ?", (new_quantity, product_id))
-            await db.commit()
+    product = await database.fetch_one("SELECT quantity, unit FROM products WHERE product_id = :product_id", {"product_id": product_id})
+    if not product:
+        await message.answer("❌ Product not found.")
+        return
+
+    current_quantity = product["quantity"]
+    unit = product["unit"]
+
+    if quantity_used > current_quantity:
+        await message.answer(f"❌ Insufficient stock. Only {current_quantity} {unit} available.")
+        return
+
+    new_quantity = current_quantity - quantity_used
+    await database.execute(
+        "UPDATE products SET quantity = :new_quantity WHERE product_id = :product_id",
+        {"new_quantity": new_quantity, "product_id": product_id}
+    )
 
     await message.answer(f"✅ Used {quantity_used} {unit} of product {product_id}. Remaining: {new_quantity} {unit}.")
 
@@ -498,23 +550,26 @@ async def list_products(message: Message):
         await message.answer("❌ You don't have permission to use this command.")
         return
 
-    async with aiosqlite.connect(DB_FILE) as db:
-        async with db.execute("""
-            SELECT c.name, p.name, p.quantity, p.unit
-            FROM products p
-            LEFT JOIN categories c ON p.category_id = c.category_id
-            ORDER BY c.name
-        """) as cursor:
-            rows = await cursor.fetchall()
+    rows = await database.fetch_all(
+        """
+        SELECT c.name as category_name, p.name as product_name, p.quantity, p.unit
+        FROM products p
+        LEFT JOIN categories c ON p.category_id = c.category_id
+        ORDER BY c.name
+        """
+    )
 
     if not rows:
         await message.answer("❌ No products found.")
         return
 
     categories = {}
-    for category, name, quantity, unit in rows:
-        cat = category or "Uncategorized"
-        categories.setdefault(cat, []).append(f"{name}: {int(quantity) if quantity==int(quantity) else quantity} {unit}")
+    for row in rows:
+        cat = row["category_name"] or "Uncategorized"
+        quantity = row["quantity"]
+        # Format quantity as int if whole number, else float
+        qty_display = int(quantity) if quantity == int(quantity) else quantity
+        categories.setdefault(cat, []).append(f"{row['product_name']}: {qty_display} {row['unit']}")
 
     lines = ["📦 Product List:"]
     for cat, items in categories.items():
@@ -542,26 +597,26 @@ async def station_products(message: Message):
         await message.answer("⚠️ Station ID must be an integer.")
         return
 
-    async with aiosqlite.connect(DB_FILE) as db:
-        async with db.execute("""
-            SELECT p.name, p.quantity, p.unit FROM products p
-            JOIN station_products sp ON p.product_id = sp.product_id
-            WHERE sp.station_id = ?
-        """, (station_id,)) as cursor:
-            rows = await cursor.fetchall()
+    rows = await database.fetch_all(
+        """
+        SELECT p.name, p.quantity, p.unit FROM products p
+        JOIN station_products sp ON p.product_id = sp.product_id
+        WHERE sp.station_id = :station_id
+        """,
+        {"station_id": station_id}
+    )
 
     if not rows:
         await message.answer(f"❌ No products found for station {station_id}.")
         return
 
     lines = [f"📦 Products at Station {station_id}:"]
-    for name, quantity, unit in rows:
-        lines.append(f"{name}: {quantity} {unit}")
+    for row in rows:
+        lines.append(f"{row['name']}: {row['quantity']} {row['unit']}")
 
     await message.answer("\n".join(lines))
 
 # --- SHIFT ---
-
 @dp.message(Command("set_shift"))
 async def ask_shift(message: Message):
     keyboard = InlineKeyboardMarkup(
@@ -575,20 +630,18 @@ async def ask_shift(message: Message):
     )
     await message.answer("What shift are you working today?", reply_markup=keyboard)
 
-# --- Handle Shift Selection ---
+
 @dp.callback_query(F.data.startswith("shift_"))
 async def handle_shift_selection(callback_query: CallbackQuery):
     user_id = callback_query.from_user.id
     shift = callback_query.data.replace("shift_", "")
     today = datetime.now().strftime("%d/%m/%Y")
 
-    async with aiosqlite.connect(DB_FILE) as db:
-        await db.execute("""
-            INSERT INTO work_logs (user_id, date, shift)
-            VALUES (?, ?, ?)
-            ON CONFLICT(user_id, date) DO UPDATE SET shift=excluded.shift
-        """, (user_id, today, shift))
-        await db.commit()
+    await database.execute("""
+        INSERT INTO work_logs (user_id, date, shift)
+        VALUES (:user_id, :date, :shift)
+        ON CONFLICT (user_id, date) DO UPDATE SET shift = EXCLUDED.shift
+    """, values={"user_id": user_id, "date": today, "shift": shift})
 
     shift_names = {
         "first": "First Shift (08:00–16:00)",
@@ -601,24 +654,21 @@ async def handle_shift_selection(callback_query: CallbackQuery):
     await callback_query.answer(f"✅ Shift set to: {shift_names.get(shift, shift.capitalize())}")
 
 
-
 async def bot_send_shift_question():
-    async with aiosqlite.connect(DB_FILE) as db:
-        async with db.execute("SELECT user_id FROM users") as cursor:
-            users = await cursor.fetchall()
+    users = await database.fetch_all("SELECT user_id FROM users")
 
     keyboard = InlineKeyboardMarkup(
         inline_keyboard=[
             [InlineKeyboardButton(text="🕗 First Shift (08:00–16:00)", callback_data="shift_first")],
-            [InlineKeyboardButton(text="🌆 Middle Shift (12:00–20:00)", callback_data="shift_middle")], 
+            [InlineKeyboardButton(text="🌆 Middle Shift (12:00–20:00)", callback_data="shift_middle")],
             [InlineKeyboardButton(text="🌃 Second Shift (16:00–00:00)", callback_data="shift_second")],
             [InlineKeyboardButton(text="💟 Full Shift (08:00–00:00)", callback_data="shift_full")],
-            [InlineKeyboardButton(text="❌ Off Today", callback_data="shift_off")]
+            [InlineKeyboardButton(text="❌ Off Today", callback_data="shift_off")],
         ]
     )
 
-    for (user_id_raw,) in users:
-        user_id = int(user_id_raw)
+    for user in users:
+        user_id = user["user_id"]
         try:
             await bot.send_message(user_id, "What shift are you working today?", reply_markup=keyboard)
         except Exception as e:
@@ -628,67 +678,55 @@ async def bot_send_shift_question():
 scheduler.add_job(bot_send_shift_question, 'cron', hour=7, minute=0)
 
 
-
-
 @dp.message(Command("shift_end"))
 async def shift_end(message: Message):
     user_id = str(message.from_user.id)
     LOW_STOCK_THRESHOLD = 10  # define your low stock limit here
     MIN_LOW_STOCK_PRODUCTS = 2  # minimum products to trigger report
 
-    # Check if user is admin
-    async with aiosqlite.connect(DB_FILE) as db:
-        async with db.execute("SELECT 1 FROM admins WHERE admin_user_id = ?", (user_id,)) as cursor:
-            is_admin = await cursor.fetchone()
+    is_admin = await database.fetch_one(
+        "SELECT 1 FROM admins WHERE admin_user_id = :user_id",
+        values={"user_id": user_id}
+    )
 
     if not is_admin:
         await message.answer("❌ You don't have permission to use this command.")
         return
 
-    # Fetch products with low stock
-    async with aiosqlite.connect(DB_FILE) as db:
-        async with db.execute("""
-            SELECT DISTINCT p.name, p.quantity, p.unit
-            FROM products p
-            JOIN station_products sp ON p.product_id = sp.product_id
-            WHERE p.quantity <= ?
-        """, (LOW_STOCK_THRESHOLD,)) as cursor:
-            low_stock_products = await cursor.fetchall()
+    low_stock_products = await database.fetch_all("""
+        SELECT DISTINCT p.name, p.quantity, p.unit
+        FROM products p
+        JOIN station_products sp ON p.product_id = sp.product_id
+        WHERE p.quantity <= :threshold
+    """, values={"threshold": LOW_STOCK_THRESHOLD})
 
     if len(low_stock_products) >= MIN_LOW_STOCK_PRODUCTS:
         now_str = datetime.now().strftime("%Y-%m-%d %H:%M")
         report_lines = [f"⚠️ Low Stock Products Report - {now_str}"]
 
-        for name, quantity, unit in low_stock_products:
+        for product in low_stock_products:
+            quantity = product["quantity"]
             quantity_display = int(quantity) if quantity == int(quantity) else quantity
-            report_lines.append(f"{name}: {quantity_display} {unit}")
+            report_lines.append(f"{product['name']}: {quantity_display} {product['unit']}")
 
         report_lines.append(f"\nTotal Low Stock Products: {len(low_stock_products)}")
         await message.answer("\n".join(report_lines))
     else:
-        # Send a reminder if fewer than 2 products are low
         await message.answer("🔔 Reminder: Low stock detected but fewer than 2 products. Please check inventory carefully.")
 
 
-
-
-
-
-# ---------- START WORK ----------
-
 async def register_user(user_id: str):
     try:
-        async with aiosqlite.connect(DB_FILE) as db:
-            await db.execute("""
-                CREATE TABLE IF NOT EXISTS users (
-                    user_id TEXT PRIMARY KEY,
-                    username TEXT
-                )
-            """)
-            await db.execute("""
-                INSERT OR IGNORE INTO users (user_id) VALUES (?)
-            """, (user_id,))
-            await db.commit()
+        await database.execute("""
+            CREATE TABLE IF NOT EXISTS users (
+                user_id TEXT PRIMARY KEY,
+                username TEXT
+            )
+        """)
+        await database.execute("""
+            INSERT INTO users (user_id) VALUES (:user_id)
+            ON CONFLICT DO NOTHING
+        """, values={"user_id": user_id})
     except Exception as e:
         print(f"Error registering user {user_id}: {e}")
         raise
@@ -697,33 +735,28 @@ async def register_user(user_id: str):
 @dp.message(Command("start_work"))
 async def start_work(message: Message):
     try:
-        await register_user(str(message.from_user.id))
-
         user_id = str(message.from_user.id)
+        await register_user(user_id)
+
         today = datetime.now().strftime("%d/%m/%Y")
         now = datetime.now().strftime("%H:%M")
 
-        async with aiosqlite.connect(DB_FILE) as db:
-            await db.execute("""
-                CREATE TABLE IF NOT EXISTS work_logs (
-                    user_id TEXT,
-                    date TEXT,
-                    start_time TEXT,
-                    end_time TEXT,
-                    hours REAL,
-                    PRIMARY KEY (user_id, date)
-                )
-            """)
+        await database.execute("""
+            CREATE TABLE IF NOT EXISTS work_logs (
+                user_id TEXT,
+                date TEXT,
+                start_time TEXT,
+                end_time TEXT,
+                hours REAL,
+                PRIMARY KEY (user_id, date)
+            )
+        """)
 
-            await db.execute("""
-                INSERT OR IGNORE INTO work_logs (user_id, date, start_time, end_time, hours)
-                VALUES (?, ?, ?, '', 0)
-            """, (user_id, today, now))
-
-            await db.execute("""
-                UPDATE work_logs SET start_time = ? WHERE user_id = ? AND date = ?
-            """, (now, user_id, today))
-            await db.commit()
+        await database.execute("""
+            INSERT INTO work_logs (user_id, date, start_time, end_time, hours)
+            VALUES (:user_id, :date, :start_time, '', 0)
+            ON CONFLICT (user_id, date) DO UPDATE SET start_time = EXCLUDED.start_time
+        """, values={"user_id": user_id, "date": today, "start_time": now})
 
         await message.answer(f"🟢 Work started at {now} on {today}")
         await message.answer("vay araa eli gorc")
@@ -738,41 +771,36 @@ async def start_work(message: Message):
         await message.answer("❌ Something went wrong. Please try again later.")
 
 
-# ---------- END WORK ----------
 @dp.message(Command("end_work"))
 async def end_work(message: Message):
     user_id = str(message.from_user.id)
     now_time = datetime.now().strftime("%H:%M")
 
-    async with aiosqlite.connect(DB_FILE) as db:
-        # Get the most recent unfinished shift (no end_time yet)
-        async with db.execute("""
-            SELECT date, start_time FROM work_logs
-            WHERE user_id = ? AND (end_time IS NULL OR end_time = '')
-            ORDER BY date DESC LIMIT 1
-        """, (user_id,)) as cursor:
-            row = await cursor.fetchone()
+    row = await database.fetch_one("""
+        SELECT date, start_time FROM work_logs
+        WHERE user_id = :user_id AND (end_time IS NULL OR end_time = '')
+        ORDER BY date DESC LIMIT 1
+    """, values={"user_id": user_id})
 
-        if not row:
-            await message.answer("⚠️ You must start work first using /start_work")
-            return
+    if not row:
+        await message.answer("⚠️ You must start work first using /start_work")
+        return
 
-        work_date, start_time_str = row
-        start_time = datetime.strptime(start_time_str, "%H:%M")
-        end_time = datetime.strptime(now_time, "%H:%M")
+    work_date, start_time_str = row["date"], row["start_time"]
+    start_time = datetime.strptime(start_time_str, "%H:%M")
+    end_time = datetime.strptime(now_time, "%H:%M")
 
-        # Handle overnight shift
-        if end_time < start_time:
-            end_time += timedelta(days=1)
+    # Handle overnight shift
+    if end_time < start_time:
+        end_time += timedelta(days=1)
 
-        hours = round((end_time - start_time).seconds / 3600, 2)
+    hours = round((end_time - start_time).seconds / 3600, 2)
 
-        await db.execute("""
-            UPDATE work_logs
-            SET end_time = ?, hours = ?
-            WHERE user_id = ? AND date = ?
-        """, (now_time, hours, user_id, work_date))
-        await db.commit()
+    await database.execute("""
+        UPDATE work_logs
+        SET end_time = :end_time, hours = :hours
+        WHERE user_id = :user_id AND date = :date
+    """, values={"end_time": now_time, "hours": hours, "user_id": user_id, "date": work_date})
 
     await message.answer(f"🔴 Work ended at {now_time}. Total worked: {hours} hours")
 
@@ -782,50 +810,47 @@ async def end_work(message: Message):
         print(f"Failed to send sticker: {e}")
 
 
-
-# ---------- REPORT ----------
-
 @dp.message(Command("report"))
 async def report(message: Message):
     user_id = str(message.from_user.id)
-    async with aiosqlite.connect(DB_FILE) as db:
-        async with db.execute("SELECT date, start_time, end_time, hours FROM work_logs WHERE user_id = ? ORDER BY date", (user_id,)) as cursor:
-            rows = await cursor.fetchall()
+    rows = await database.fetch_all("""
+        SELECT date, start_time, end_time, hours
+        FROM work_logs
+        WHERE user_id = :user_id
+        ORDER BY date
+    """, values={"user_id": user_id})
 
     if not rows:
         await message.answer("❌ No data available.")
         return
 
-    total = sum(row[3] for row in rows if isinstance(row[3], float))
+    total = sum(row["hours"] or 0 for row in rows)
     lines = ["🗓️ Work Report:"]
-    for date, start, end, hours in rows:
-        lines.append(f"{date} | Start: {start} | End: {end} | Hours: {hours}")
+    for row in rows:
+        lines.append(f"{row['date']} | Start: {row['start_time']} | End: {row['end_time']} | Hours: {row['hours']}")
     lines.append(f"\n🧮 Total hours: {total}")
+
     await message.answer("\n".join(lines), parse_mode="Markdown")
+
     try:
         await message.answer_sticker("CAACAgIAAxkBAAIGjGgX2RIsRENWszvV4FcPXd9KUBR1AAI-FQAC4TvISyGu9Oi89CQPNgQ") 
     except Exception as e:
         print(f"Failed to send sticker: {e}")
 
-from io import BytesIO
-from aiogram.types import BufferedInputFile
 
 
 # ---------- EXCEL ----------
-
-
 @router.message(Command("export_excel"))
 async def export_excel(message: Message):
     user_id = str(message.from_user.id)
-
     try:
-        async with aiosqlite.connect(DB_FILE) as db:
-            async with db.execute("SELECT date, start_time, end_time, hours FROM work_logs WHERE user_id = ? ORDER BY date", (user_id,)) as cursor:
-                logs = await cursor.fetchall()
-
-            if not logs:
-                await message.answer("❌ No work log data found.")
-                return
+        logs = await database.fetch_all(
+            "SELECT date, start_time, end_time, hours FROM work_logs WHERE user_id = :user_id ORDER BY date",
+            values={"user_id": user_id}
+        )
+        if not logs:
+            await message.answer("❌ No work log data found.")
+            return
 
         wb = Workbook()
         ws = wb.active
@@ -843,7 +868,7 @@ async def export_excel(message: Message):
             )
 
         for row in logs:
-            ws.append(row)
+            ws.append([row["date"], row["start_time"], row["end_time"], row["hours"]])
 
         output = BytesIO()
         wb.save(output)
@@ -857,38 +882,37 @@ async def export_excel(message: Message):
         print(f"[Export Error]: {e}")
 
 
-# ---------- MONTHLY SUMMARY ----------
 async def send_monthly_summary():
     current_month = datetime.now().strftime("%m")
     current_year = datetime.now().strftime("%Y")
 
-    async with aiosqlite.connect(DB_FILE) as db:
-        async with db.execute("SELECT user_id FROM users") as cursor:
-            users = await cursor.fetchall()
+    users = await database.fetch_all("SELECT user_id FROM users")
+    for user in users:
+        user_id = user["user_id"]
+        row = await database.fetch_one(
+            """
+            SELECT SUM(hours) AS total_hours FROM work_logs
+            WHERE user_id = :user_id AND to_char(to_date(date, 'DD/MM/YYYY'), 'MM') = :month
+            AND to_char(to_date(date, 'DD/MM/YYYY'), 'YYYY') = :year
+            """,
+            values={"user_id": user_id, "month": current_month, "year": current_year}
+        )
+        total_hours = row["total_hours"] or 0.0
 
-        for (user_id,) in users:
-            async with db.execute("""
-                SELECT SUM(hours) FROM work_logs 
-                WHERE user_id = ? AND strftime('%m', date) = ? AND strftime('%Y', date) = ?
-            """, (user_id, current_month, current_year)) as cur:
-                row = await cur.fetchone()
-                total_hours = row[0] if row[0] else 0.0
+        try:
+            await bot.send_message(
+                user_id,
+                f"📆 *Monthly Summary*\nYou worked a total of *{total_hours} hours* in {datetime.now().strftime('%B')}.\nGreat job! 🎉",
+                parse_mode="Markdown"
+            )
+            await bot.send_sticker("CAACAgIAAxkBAAIGs2gX3i2qv6yzUW806VH5o4WatPONAAI2FgACIPchSJtXUTwXDwW5NgQ")
+        except Exception as e:
+            print(f"Failed to send summary to user {user_id}: {e}")
 
-            try:
-                await bot.send_message(
-                    user_id,
-                    f"📆 *Monthly Summary*\nYou worked a total of *{total_hours} hours* in {datetime.now().strftime('%B')}.\nGreat job! 🎉",
-                    parse_mode="Markdown"
-                )
 
-                await bot.send_sticker("CAACAgIAAxkBAAIGs2gX3i2qv6yzUW806VH5o4WatPONAAI2FgACIPchSJtXUTwXDwW5NgQ")
-            except Exception as e:
-                print(f"Failed to send summary to user {user_id}: {e}")
-
-                    
 scheduler.add_job(send_monthly_summary, 'cron', day='28-31', hour=7, minute=0, id="monthly_summary", misfire_grace_time=3600)
 
-# ---------- OFF ----------
+
 @dp.message(Command("off"))
 async def mark_off_day(message: Message):
     user_id = str(message.from_user.id)
@@ -906,12 +930,14 @@ async def mark_off_day(message: Message):
         await message.answer("⚠️ Usage: `/off` or `/off dd/mm/yyyy`", parse_mode="Markdown")
         return
 
-    async with aiosqlite.connect(DB_FILE) as db:
-        await db.execute("""
-            INSERT OR REPLACE INTO work_logs (user_id, date, start_time, end_time, hours)
-            VALUES (?, ?, ?, ?, ?)
-        """, (user_id, off_date, "OFF", "OFF", 0.0))
-        await db.commit()
+    await database.execute(
+        """
+        INSERT INTO work_logs (user_id, date, start_time, end_time, hours)
+        VALUES (:user_id, :date, 'OFF', 'OFF', 0.0)
+        ON CONFLICT (user_id, date) DO UPDATE SET start_time='OFF', end_time='OFF', hours=0.0
+        """,
+        values={"user_id": user_id, "date": off_date}
+    )
 
     await message.answer(f"✅ Marked {off_date} as an OFF day 🛌", parse_mode="Markdown")
     try:
@@ -919,7 +945,7 @@ async def mark_off_day(message: Message):
     except Exception as e:
         print(f"Failed to send sticker: {e}")
 
-# ---------- EDIT ----------
+
 @dp.message(Command("edit"))
 async def edit_work_time(message: Message):
     user_id = str(message.from_user.id)
@@ -932,7 +958,6 @@ async def edit_work_time(message: Message):
     date_str, start_str, end_str = args[1], args[2], args[3]
 
     try:
-        # Validate input formats
         datetime.strptime(date_str, "%d/%m/%Y")
         start_time = datetime.strptime(start_str, "%H:%M")
         end_time = datetime.strptime(end_str, "%H:%M")
@@ -945,26 +970,28 @@ async def edit_work_time(message: Message):
     except Exception as e:
         print(f"Failed to send sticker: {e}")
 
-    # Handle overnight shift
     if end_time < start_time:
         end_time += timedelta(days=1)
 
     work_seconds = (end_time - start_time).total_seconds()
     work_hours = round(work_seconds / 3600, 2)
 
-    async with aiosqlite.connect(DB_FILE) as db:
-        await db.execute("""
-            INSERT OR REPLACE INTO work_logs (user_id, date, start_time, end_time, hours)
-            VALUES (?, ?, ?, ?, ?)
-        """, (user_id, date_str, start_str, end_str, work_hours))
-        await db.commit()
+    await database.execute(
+        """
+        INSERT INTO work_logs (user_id, date, start_time, end_time, hours)
+        VALUES (:user_id, :date, :start_time, :end_time, :hours)
+        ON CONFLICT (user_id, date) DO UPDATE
+        SET start_time = EXCLUDED.start_time, end_time = EXCLUDED.end_time, hours = EXCLUDED.hours
+        """,
+        values={"user_id": user_id, "date": date_str, "start_time": start_str, "end_time": end_str, "hours": work_hours}
+    )
 
     await message.answer(
         f"✏️ Updated `{date_str}`:\n🕒 Start: `{start_str}`\n🕔 End: `{end_str}`\n📊 Total: *{work_hours} hours*",
         parse_mode="Markdown"
     )
 
-# ---------- REMOVE ----------
+
 @dp.message(Command("remove"))
 async def remove_log(message: Message):
     user_id = str(message.from_user.id)
@@ -982,14 +1009,12 @@ async def remove_log(message: Message):
         await message.answer("❌ Invalid date format. Use: `/remove dd/mm/yyyy`", parse_mode="Markdown")
         return
 
-    async with aiosqlite.connect(DB_FILE) as db:
-        await db.execute("""
-            DELETE FROM work_logs WHERE user_id = ? AND date = ?
-        """, (user_id, date_str))
-        await db.commit()
+    await database.execute(
+        "DELETE FROM work_logs WHERE user_id = :user_id AND date = :date",
+        values={"user_id": user_id, "date": date_str}
+    )
 
     await message.answer(f"🗑️ Removed work log for {date_str}")
-
 # ---------- RESET ----------
 @dp.message(Command("reset"))
 async def confirm_reset(message: Message):
@@ -1006,15 +1031,16 @@ async def confirm_reset(message: Message):
 @dp.callback_query(F.data == "confirm_reset")
 async def handle_confirm_reset(callback: CallbackQuery):
     user_id = str(callback.from_user.id)
-    async with aiosqlite.connect(DB_FILE) as db:
-        await db.execute("DELETE FROM work_logs WHERE user_id = ?", (user_id,))
-        await db.commit()
-
+    await database.execute(
+        "DELETE FROM work_logs WHERE user_id = :user_id",
+        values={"user_id": user_id}
+    )
     await callback.message.edit_text("🧹 All your work logs have been deleted.")
 
 @dp.callback_query(F.data == "cancel_reset")
 async def handle_cancel_reset(callback: CallbackQuery):
     await callback.message.edit_text("❌ Reset canceled. Your data is safe.")
+
 
 # ---------- SET BOT COMMANDS ----------
 async def set_bot_commands():
@@ -1057,23 +1083,30 @@ Use `/help` at any time to see this list again.
     except Exception as e:
         print(f"Failed to send sticker: {e}")
 
+
 # ---------- MONEY ----------
 @dp.message(Command("money"))
 async def calculate_money(message: Message):
     user_id = str(message.from_user.id)
-    async with aiosqlite.connect(DB_FILE) as db:
-        async with db.execute("SELECT station, hourly_rate FROM users WHERE user_id = ?", (user_id,)) as cursor:
-            row = await cursor.fetchone()
-            if not row:
-                await message.answer("❌ You must register first using /register.")
-                return
-            station, hourly_rate = row
+    user_row = await database.fetch_one(
+        "SELECT station, hourly_rate FROM users WHERE user_id = :user_id",
+        values={"user_id": user_id}
+    )
+    if not user_row:
+        await message.answer("❌ You must register first using /register.")
+        return
 
-        async with db.execute("SELECT SUM(hours) FROM work_logs WHERE user_id = ?", (user_id,)) as cursor:
-            total_hours_row = await cursor.fetchone()
-            total_hours = total_hours_row[0] if total_hours_row[0] else 0.0
+    station = user_row["station"]
+    hourly_rate = user_row["hourly_rate"]
 
-        total_money = round(total_hours * hourly_rate, 2)
+    total_hours_row = await database.fetch_one(
+        "SELECT SUM(hours) AS total_hours FROM work_logs WHERE user_id = :user_id",
+        values={"user_id": user_id}
+    )
+    total_hours = total_hours_row["total_hours"] or 0.0
+
+    total_money = round(total_hours * hourly_rate, 2)
+
     await message.answer(
         f"💰 *Earnings Summary*\n"
         f"Station: *{station.capitalize()}*\n"
@@ -1092,6 +1125,7 @@ async def calculate_money(message: Message):
 @dp.message(F.sticker)
 async def get_sticker_id(message: Message):
     await message.answer(f"🆔 Sticker file ID:\n`{message.sticker.file_id}`", parse_mode="Markdown")
+
 
 # ---------- MAIN ----------
 
