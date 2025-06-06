@@ -15,6 +15,7 @@ from aiogram.fsm.state import StatesGroup, State
 from openpyxl.styles import Font, Border, Side
 from io import BytesIO 
 from aiogram import Router
+from databases import Database
 
 
 
@@ -171,100 +172,109 @@ async def send_low_stock_reminder():
 
 
 
+load_dotenv()
+DATABASE_URL = os.getenv("DATABASE_URL")
+
+database = Database(DATABASE_URL)
+
 async def init_db():
     try:
-        async with aiosqlite.connect(DB_FILE) as db:
-            # ---------- USERS ----------
-            await db.execute("""
-                CREATE TABLE IF NOT EXISTS users (
-                    user_id INTEGER PRIMARY KEY,
-                    station TEXT,
-                    name TEXT,
-                    hourly_rate REAL
-                )
-            """)
+        await database.connect()
 
-            # ---------- WORK LOGS ----------
-            await db.execute("""
-                CREATE TABLE IF NOT EXISTS work_logs (
-                    user_id INTEGER,
-                    station_name TEXT,
-                    date TEXT,
-                    start_time TEXT,
-                    end_time TEXT,
-                    hours REAL,
-                    shift TEXT,
-                    PRIMARY KEY (user_id, date),
-                    FOREIGN KEY (user_id) REFERENCES users(user_id)
-                )
-            """)
+        # USERS table
+        await database.execute("""
+            CREATE TABLE IF NOT EXISTS users (
+                user_id BIGINT PRIMARY KEY,
+                station TEXT,
+                name TEXT,
+                hourly_rate REAL
+            )
+        """)
 
-            # ---------- ADMINS ----------
-            await db.execute("""
-                CREATE TABLE IF NOT EXISTS admins (
-                    admin_user_id TEXT PRIMARY KEY,
-                    name TEXT
-                )
-            """)
+        # WORK LOGS table
+        await database.execute("""
+            CREATE TABLE IF NOT EXISTS work_logs (
+                user_id BIGINT,
+                station_name TEXT,
+                date DATE,
+                start_time TIME,
+                end_time TIME,
+                hours REAL,
+                shift TEXT,
+                PRIMARY KEY (user_id, date),
+                FOREIGN KEY (user_id) REFERENCES users(user_id)
+            )
+        """)
 
-            await db.execute("""
-                INSERT OR IGNORE INTO admins (admin_user_id, name) VALUES
-                ('1291587607', 'Miostral')
-            """)
+        # ADMINS table
+        await database.execute("""
+            CREATE TABLE IF NOT EXISTS admins (
+                admin_user_id BIGINT PRIMARY KEY,
+                name TEXT
+            )
+        """)
 
-            # ---------- STATIONS ----------
-            await db.execute("""
-                CREATE TABLE IF NOT EXISTS stations (
-                    station_id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    name TEXT UNIQUE,
-                    hourly_rate REAL
-                )
-            """)
+        # Insert admin if not exists (UPSERT)
+        await database.execute("""
+            INSERT INTO admins (admin_user_id, name) VALUES (1291587607, 'Miostral')
+            ON CONFLICT (admin_user_id) DO NOTHING
+        """)
 
-            await db.executemany("""
-                INSERT OR IGNORE INTO stations (name, hourly_rate) VALUES (?, ?)
-            """, [
-                ('bar', 350),
-                ('tiramisu', 700),
-                ('kitchen', 600),
-                ('manager', 500)
-            ])
+        # STATIONS table
+        await database.execute("""
+            CREATE TABLE IF NOT EXISTS stations (
+                station_id SERIAL PRIMARY KEY,
+                name TEXT UNIQUE,
+                hourly_rate REAL
+            )
+        """)
 
-            # ---------- CATEGORIES ----------
-            await db.execute("""
-                CREATE TABLE IF NOT EXISTS categories (
-                    category_id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    name TEXT UNIQUE
-                )
-            """)
+        # Insert stations if not exists
+        stations = [
+            ('bar', 350),
+            ('tiramisu', 700),
+            ('kitchen', 600),
+            ('manager', 500)
+        ]
+        for name, rate in stations:
+            await database.execute("""
+                INSERT INTO stations (name, hourly_rate) VALUES (:name, :rate)
+                ON CONFLICT (name) DO NOTHING
+            """, values={"name": name, "rate": rate})
 
-            # ---------- PRODUCTS ----------
-            await db.execute("""
-                CREATE TABLE IF NOT EXISTS products (
-                    product_id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    name TEXT,
-                    quantity REAL,
-                    unit TEXT, -- g, kg, l, pcs
-                    category_id INTEGER,
-                    threshold REAL DEFAULT 0, -- used for low-stock alert
-                    FOREIGN KEY (category_id) REFERENCES categories(category_id)
-                )
-            """)
+        # CATEGORIES table
+        await database.execute("""
+            CREATE TABLE IF NOT EXISTS categories (
+                category_id SERIAL PRIMARY KEY,
+                name TEXT UNIQUE
+            )
+        """)
 
-            # ---------- STATION-PRODUCT RELATION ----------
-            await db.execute("""
-                CREATE TABLE IF NOT EXISTS station_products (
-                    station_id INTEGER,
-                    product_id INTEGER,
-                    FOREIGN KEY (station_id) REFERENCES stations(station_id),
-                    FOREIGN KEY (product_id) REFERENCES products(product_id),
-                    PRIMARY KEY (station_id, product_id)
-                )
-            """)
+        # PRODUCTS table
+        await database.execute("""
+            CREATE TABLE IF NOT EXISTS products (
+                product_id SERIAL PRIMARY KEY,
+                name TEXT,
+                quantity REAL,
+                unit TEXT,
+                category_id INTEGER REFERENCES categories(category_id),
+                threshold REAL DEFAULT 0
+            )
+        """)
 
-            await db.commit()
+        # STATION_PRODUCTS table
+        await database.execute("""
+            CREATE TABLE IF NOT EXISTS station_products (
+                station_id INTEGER REFERENCES stations(station_id),
+                product_id INTEGER REFERENCES products(product_id),
+                PRIMARY KEY (station_id, product_id)
+            )
+        """)
+
     except Exception as e:
         print(f"❌ Error initializing database: {e}")
+    finally:
+        await database.disconnect()
 
 
 # ---------- BOT COMMANDS ----------
@@ -1086,7 +1096,7 @@ async def get_sticker_id(message: Message):
     await message.answer(f"🆔 Sticker file ID:\n`{message.sticker.file_id}`", parse_mode="Markdown")
 
 # ---------- MAIN ----------
-# ---------- MAIN ----------
+
 async def main():
     await init_db()
     await set_bot_commands()
