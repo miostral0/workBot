@@ -1097,6 +1097,7 @@ async def get_sticker_id(message: Message):
 
 # ---------- MAIN ----------
 
+
 async def main():
     await init_db()
     await set_bot_commands()
