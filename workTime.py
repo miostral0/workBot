@@ -21,10 +21,8 @@ from databases import Database
 
 load_dotenv()
 API_TOKEN = os.getenv("API_TOKEN")
-DB_DIR = "data"
-os.makedirs(DB_DIR, exist_ok=True)
-DB_FILE = os.path.join(DB_DIR, "work.db")
-
+DATABASE_URL = os.getenv("DATABASE_URL")
+DB_FILE = Database(DATABASE_URL)
 
 logging.basicConfig(level=logging.INFO)
 
