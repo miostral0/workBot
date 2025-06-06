@@ -797,7 +797,7 @@ async def report(message: Message):
         print(f"Failed to send sticker: {e}")
 
 from io import BytesIO
-
+from aiogram.types import BufferedInputFile
 
 @router.message(Command("export_excel"))
 async def export_excel(message: Message):
@@ -834,13 +834,14 @@ async def export_excel(message: Message):
         wb.save(output)
         output.seek(0)
 
-        file = InputFile(path_or_bytesio=output, filename=f"report_{user_id}.xlsx")
+        file = BufferedInputFile(output.read(), filename=f"report_{user_id}.xlsx")
         await message.answer_document(file, caption="📊 Your work log report.")
 
     except Exception as e:
         await message.answer("❌ Failed to export your work log.")
         print(f"[Export Error]: {e}")
-    
+
+
 # ---------- MONTHLY SUMMARY ----------
 async def send_monthly_summary():
     current_month = datetime.now().strftime("%m")
