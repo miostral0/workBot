@@ -322,7 +322,7 @@ class RegistrationStates(StatesGroup):
     waiting_for_name = State()
     waiting_for_station = State()
 
-@dp.message(StateFilter(RegistrationStates.waiting_for_station))
+@dp.message(Command("register"))
 async def set_station(message: types.Message, state: FSMContext):
     user_id = str(message.from_user.id)
     station = message.text.lower()
