@@ -1,29 +1,21 @@
 import os
 import logging
 import asyncio
-from datetime import datetime
+from datetime import datetime, timedelta
 from dotenv import load_dotenv
 import aiosqlite
-from aiogram import Bot, Dispatcher, F
-from aiogram.filters import Command
+from aiogram import Bot, Dispatcher, F, types
+from aiogram.filters import Command, StateFilter
 from aiogram.types import Message, InputFile, BotCommand, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from pytz import timezone
 from openpyxl import Workbook
-from aiogram import types
-import logging
-from aiogram import Bot, Dispatcher, types
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import StatesGroup, State
-from aiogram.filters import StateFilter
 from openpyxl.styles import Font, Border, Side
-from aiogram.types import InputFile
 from io import BytesIO 
-from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram import Router
-from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
-from aiogram.filters import Command
-from datetime import datetime, timedelta
+
 
 
 load_dotenv()
@@ -804,36 +796,42 @@ async def report(message: Message):
     except Exception as e:
         print(f"Failed to send sticker: {e}")
 
-# ---------- EXCEL EXPORT ----------
 
-@dp.message(Command("export_excel"))
-async def export_excel(message: Message):
+@router.message(Command("export_excel"))
+async def export_excel_handler(message: Message):
     user_id = str(message.from_user.id)
 
     try:
         async with aiosqlite.connect(DB_FILE) as db:
-            async with db.execute("SELECT date, start_time, end_time, hours FROM work_logs WHERE user_id = ? ORDER BY date", (user_id,)) as cursor:
+            async with db.execute("""
+                SELECT date, start_time, end_time, hours 
+                FROM work_logs 
+                WHERE user_id = ? 
+                ORDER BY date
+            """, (user_id,)) as cursor:
                 logs = await cursor.fetchall()
 
-            if not logs:
-                await message.answer("❌ No work log data found.")
-                return
+        if not logs:
+            await message.answer("❌ No work log data found.")
+            return
 
         wb = Workbook()
         ws = wb.active
         ws.title = "Work Logs"
 
-        # Headers
         headers = ["Date", "Start", "End", "Hours"]
         ws.append(headers)
+
+        header_style = Font(bold=True)
+        border_style = Border(
+            left=Side(style='thin'),
+            right=Side(style='thin'),
+            top=Side(style='thin'),
+            bottom=Side(style='thin')
+        )
         for cell in ws[1]:
-            cell.font = Font(bold=True)
-            cell.border = Border(
-                left=Side(style='thin'),
-                right=Side(style='thin'),
-                top=Side(style='thin'),
-                bottom=Side(style='thin')
-            )
+            cell.font = header_style
+            cell.border = border_style
 
         for row in logs:
             ws.append(row)
@@ -842,12 +840,12 @@ async def export_excel(message: Message):
         wb.save(output)
         output.seek(0)
 
-        file = InputFile(output, filename=f"report_{user_id}.xlsx")
-        await message.answer_document(file, caption="📊 Your work log report.")
+        file = InputFile(output, filename=f"work_log_{user_id}.xlsx")
+        await message.answer_document(file, caption="📊 Your work log report is ready!")
 
     except Exception as e:
-        await message.answer("❌ Failed to export Excel file.")
-        print(f"Export error: {e}")
+        await message.answer("❌ Failed to export your work log.")
+        print(f"[Export Error]: {e}")
     
 # ---------- MONTHLY SUMMARY ----------
 async def send_monthly_summary():
