@@ -614,7 +614,7 @@ async def bot_send_shift_question():
             print(f"Shift prompt failed for {user_id}: {e}")
 
 
-scheduler.add_job(bot_send_shift_question, 'cron', hour=14, minute=22)
+scheduler.add_job(bot_send_shift_question, 'cron', hour=14, minute=30)
 
 
 
