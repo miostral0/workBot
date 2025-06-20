@@ -136,27 +136,22 @@ scheduler.add_job(send_off_shift, 'cron', hour=15, minute=30)
 
 async def send_low_stock_reminder():
     async with aiosqlite.connect(DB_FILE) as db:
-        # Get all products below their defined threshold
         async with db.execute("""
             SELECT name, quantity, unit FROM products
             WHERE quantity <= threshold AND threshold > 0
         """) as cursor:
             low_stock_products = await cursor.fetchall()
-
-        # Get all admin user IDs
         async with db.execute("SELECT admin_user_id FROM admins") as cursor:
             admins = await cursor.fetchall()
 
     if not low_stock_products or not admins:
-        return  # No need to notify
+        return 
 
-    # Build reminder message
     reminder_msg = "⚠️ *Low Stock Alert:*\nThe following products are running low:\n\n"
     for name, quantity, unit in low_stock_products:
         quantity_display = int(quantity) if quantity == int(quantity) else quantity
         reminder_msg += f"• {name}: {quantity_display} {unit}\n"
 
-    # Send to all admins
     for (admin_id,) in admins:
         await bot.send_message(admin_id, reminder_msg, parse_mode="Markdown")
 
@@ -1087,15 +1082,14 @@ async def get_sticker_id(message: Message):
 async def main():
     await init_db()
     await set_bot_commands()
-    await bot.delete_webhook(drop_pending_updates=True) 
-    scheduler.start() 
-    dp.include_router(router)          
-    await dp.start_polling(bot)      
-
-
+    await bot.delete_webhook(drop_pending_updates=True)
+    scheduler.start()
+    dp.include_router(router)
+    await dp.start_polling(bot)
 
 
 if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO)
     try:
         asyncio.run(main())
     except (KeyboardInterrupt, SystemExit):
